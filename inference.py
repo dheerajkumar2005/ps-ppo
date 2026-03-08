@@ -118,7 +118,7 @@ class InferenceActor:
         self.stats.total_requests += B
         self.stats.avg_batch_size = (self.stats.avg_batch_size * 0.95) + (B * 0.05)
 
-        obs = torch.from_numpy(obs_np).to(self.device)
+        obs = torch.from_numpy(obs_np).to(self.device, non_blocking=True)
 
         # Single forward pass for the entire batch
         logits, _, value = self.net(obs)
@@ -126,6 +126,11 @@ class InferenceActor:
         # Extract Action Mask
         m_start, m_end = self.net.unpacker.offsets["action_mask"]
         mask_sub = obs[:, m_start:m_end].float()
+        
+        bad = (mask_sub.sum(dim=1) <= 0.49)
+        if bad.any():
+            mask_sub = mask_sub.clone()
+            mask_sub[bad, 0] = 1.0 # Force struggle/default if no valid moves
         
         # Sample actions
         act, logp, _ = masked_sample(logits, mask_sub, temp=self.current_temp)
@@ -172,7 +177,7 @@ class InferenceActor:
             
         latest_ckpt = paths[-1]
         try:
-            st = _extract_state_dict(torch.load(latest_ckpt, map_location="cpu"))
+            st = _extract_state_dict(torch.load(latest_ckpt, map_location="cpu", weights_only=False))
             self.net.load_state_dict(st)
             logger.info(f"InferenceActor resumed from {latest_ckpt}")
         except Exception as e:

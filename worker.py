@@ -163,7 +163,7 @@ class WorkerLearnerClient:
                 items.append(first)
             except asyncio.TimeoutError:
                 continue
-
+            
             # Greedily gather up to max_episodes
             while len(items) < self.cfg.learn_max_episodes:
                 try: items.append(self._q.get_nowait())
@@ -220,11 +220,21 @@ class WorkerInferenceClient:
         """Consumes the request queue and calls the remote inference actor."""
         while True:
             try:
-                items = [await self._q.get()]
-                # Grab more items to fill the batch
+                try:
+                    # If the queue is empty, wait slightly.
+                    # If the queue has items, get immediately.
+                    first = await asyncio.wait_for(self._q.get(), timeout=0.01)
+                    items = [first]
+                except asyncio.TimeoutError:
+                    continue
+
+                # 2. Greedily grab everything currently in the queue up to max_batch
+                # This removes the "wait_ms" latency for queues that are already full.
                 while len(items) < self.cfg.infer_max_batch:
-                    try: items.append(self._q.get_nowait())
-                    except asyncio.QueueEmpty: break
+                    try:
+                        items.append(self._q.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
 
                 obs_batch = np.stack([it[1] for it in items], axis=0)
 
@@ -258,7 +268,7 @@ class RayBatchedPlayer(SimpleHeuristicsPlayer):
         self.cfg = cfg
         self.assembler = ObservationAssembler()
         
-        self._episode_slot_acquired: set[str] = set()
+        self._episode_slot_state: Dict[str, str] = {}
         self._traj: Dict[str, Dict[str, List[Any]]] = {}
         self._battle_starts: Dict[str, float] = {}
         self._last_act_time: Dict[str, float] = {}
@@ -270,9 +280,9 @@ class RayBatchedPlayer(SimpleHeuristicsPlayer):
         self._battle_starts.setdefault(tag, now)
 
         # Acquire Learner Slot if first turn
-        if tag not in self._episode_slot_acquired:
+        if tag not in self._episode_slot_state:
             await self.learn_client.acquire_episode_slot()
-            self._episode_slot_acquired.add(tag)
+            self._episode_slot_state[tag] = "acquired"
 
         obs_flat = self.assembler.assemble(battle)
 
@@ -307,7 +317,6 @@ class RayBatchedPlayer(SimpleHeuristicsPlayer):
         """Calculates rewards and submits the completed trajectory to the Learner."""
         buf = self._traj[tag]
         if not buf["act"]: 
-            self.learn_client.drop_episode()
             return
 
         T = len(buf["act"])
@@ -345,14 +354,19 @@ class RayBatchedPlayer(SimpleHeuristicsPlayer):
             obs_stacked, np.array(buf["act"]), np.array(buf["logp"]), 
             np.array(buf["val"]), rewards, dones
         )
+        
+        if tag in self._episode_slot_state:
+            self._episode_slot_state[tag] = "submitted"
 
     def _cleanup_local_battle(self, tag: str):
         """Wipes battle from all memory caches to prevent leaks."""
         self._battle_starts.pop(tag, None)
         self._last_act_time.pop(tag, None)
         self._traj.pop(tag, None)
-        if tag in self._episode_slot_acquired:
-            self._episode_slot_acquired.remove(tag)
+        state = self._episode_slot_state.pop(tag, None)
+        if state == "acquired":
+            # Slot was taken, but data was never submitted. We must release it here.
+            self.learn_client.drop_episode()
         
         # ADD THIS LINE: Manually clear from poke-env internal dictionary
         if hasattr(self, "_battles"):
