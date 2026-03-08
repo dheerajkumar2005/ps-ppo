@@ -489,7 +489,6 @@ def ppo_update(
         entropy=stats["ent"]/max(n_mb, 1),
         v_loss=stats["v"]/max(n_mb, 1), 
         pg_loss=stats["pg"]/max(n_mb, 1), 
-        hp_loss=0.0, 
         total_loss=stats["total"]/max(n_mb, 1), 
         n_mb=n_mb
     )

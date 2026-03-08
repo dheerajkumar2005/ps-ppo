@@ -312,6 +312,12 @@ class LearnerActor:
             self.inference_actor.set_temp.remote(new_temp)
 
             logger.info(f"Update {self.update_idx}: Loss={stats.total_loss:.3f}, KL={stats.approx_kl:.4f}")
+            print(
+                f"[learner] upd={self.update_idx} "
+                f"kl={stats.approx_kl:.4f} clip={stats.clip_frac:.3f} ent={stats.entropy:.3f} "
+                f"vloss={stats.v_loss:.3f} ploss={stats.pg_loss:.3f} loss={stats.total_loss:.3f} "
+                f"n_mb={stats.n_mb}"
+            )
 
             # 5. Checkpointing
             if self.update_idx % self.cfg.save_every_updates == 0:
