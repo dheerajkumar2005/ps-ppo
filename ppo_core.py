@@ -474,7 +474,7 @@ def ppo_update(
             stats["clip"] += clip_frac.item(); stats["ent"] += ent_loss.item()
             stats["v"] += v_loss.item(); stats["pg"] += pg_loss.item(); stats["total"] += loss.item()
 
-            if mode == "ppo" and cfg.get("target_kl") and (epoch_kl / epoch_mb) > cfg["target_kl"] * 1.5:
+            if epoch > 0 and mode == "ppo" and cfg.get("target_kl") and (epoch_kl / epoch_mb) > cfg["target_kl"] * 1.5:
                 logger.info(f"Early stop at Epoch {epoch} due to KL {epoch_kl/epoch_mb:.4f}")
                 stop_training = True
                 break
